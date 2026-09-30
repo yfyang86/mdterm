@@ -67,11 +67,18 @@ struct TermState {
     /// handed to a pager/surface.
     suspended: Arc<AtomicBool>,
     /// Serializes [`TerminalGuard::suspend`]/[`TerminalGuard::resume`]
-    /// against the input pump's read step (F7): the pump holds this mutex
-    /// across its flag-check + poll + read, so a suspend can only apply the
-    /// cooked termios once no read is in flight (pager keystrokes cannot be
-    /// stolen by an in-flight read), and resume re-applies raw mode before
-    /// the flag clears — the pump never reads stdin in cooked mode.
+    /// against the input pump's read step and the output pump's write step
+    /// (F7): a pump holds this mutex only for a bounded, microsecond-scale
+    /// critical section — re-check the suspension flag, re-poll the fd with
+    /// a zero timeout, then perform the (now guaranteed non-blocking) read
+    /// or write — so a suspend can only apply the cooked termios once no
+    /// read is in flight (pager keystrokes cannot be stolen by an in-flight
+    /// read), resume re-applies raw mode before the flag clears (the pump
+    /// never reads stdin in cooked mode), and once suspend returns no
+    /// further child output can reach stdout. The mutex is NEVER held
+    /// across an idle wait: doing so pins it ~100% of the time and starves
+    /// the other pump (and suspend/resume) — a futex-woken waiter always
+    /// loses to the holder's unlock→relock fast path.
     gate: Arc<Mutex<()>>,
 }
 
@@ -163,9 +170,11 @@ impl TerminalGuard {
     /// proxy's stdin pump. Idempotent.
     ///
     /// The gate mutex is held across the flag set + termios change, so this
-    /// call blocks until any in-flight stdin read has finished (bounded by
-    /// the pump's 100 ms poll timeout): once `suspend` returns, the input
-    /// pump is guaranteed parked and cannot steal the surface's keystrokes.
+    /// call blocks until any in-flight stdin read or stdout write has
+    /// finished (bounded: the pumps only read/write while holding the gate
+    /// when a zero-timeout poll has confirmed the operation cannot block):
+    /// once `suspend` returns, the input pump is guaranteed parked and
+    /// cannot steal the surface's keystrokes.
     pub fn suspend(&self) {
         if let Some(s) = &self.state {
             let _lock = s.gate.lock().unwrap();
@@ -245,6 +254,47 @@ fn read_veof(master_fd: RawFd) -> Option<u8> {
         None
     } else {
         Some(veof)
+    }
+}
+
+/// Result of a one-shot `poll(2)` for readability on a single fd.
+enum PollIn {
+    /// Data is available to read (POLLIN). HUP/ERR bits set alongside
+    /// POLLIN still count as ready: the pending data is drained first and
+    /// the following read observes the EOF/error.
+    Ready,
+    /// The timeout expired with nothing to read.
+    Timeout,
+    /// The fd is gone: HUP/ERR/NVAL without pending data, or the poll
+    /// itself failed (other than EINTR, which is retried internally).
+    Gone,
+}
+
+/// Poll `fd` for readability with `timeout_ms`. EINTR is retried.
+fn poll_in(fd: RawFd, timeout_ms: libc::c_int) -> PollIn {
+    loop {
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let rc = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+        if rc > 0 {
+            if pfd.revents & libc::POLLIN != 0 {
+                return PollIn::Ready;
+            }
+            if pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+                return PollIn::Gone;
+            }
+            return PollIn::Timeout; // spurious wakeup; treat as no input
+        }
+        if rc == 0 {
+            return PollIn::Timeout;
+        }
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::EINTR) {
+            return PollIn::Gone;
+        }
     }
 }
 
@@ -364,6 +414,21 @@ pub struct SpawnIoOptions {
     /// written to `output`, and flushed on resume. The real-TTY path wires
     /// this to the [`TerminalGuard`]; tests may inject their own flag.
     pub suspend_flag: Option<Arc<AtomicBool>>,
+    /// Fd polled for input readiness on the suspension-aware input path
+    /// (F7): when present together with `suspend_flag`, the input pump
+    /// parks while suspended and re-polls this fd under `gate` before
+    /// every read instead of blocking in `read`. The real-TTY path passes
+    /// stdin's fd; tests wiring a fake terminal as `input` pass its slave
+    /// fd. Must describe the same underlying file as `input`.
+    pub input_fd: Option<RawFd>,
+    /// Gate mutex serializing the input pump's read step and the output
+    /// pump's write step against [`TerminalGuard::suspend`]/[`resume`]
+    /// (F7). Only ever held for bounded, non-blocking critical sections
+    /// (flag re-check + zero-timeout re-poll + the read/write itself), so
+    /// neither pump nor suspend/resume can starve behind it.
+    ///
+    /// [`resume`]: TerminalGuard::resume
+    pub gate: Option<Arc<Mutex<()>>>,
 }
 
 /// Like [`crate::PtyProxy::spawn`] but with injected input/output streams and
@@ -392,8 +457,8 @@ where
         options.term_fd.unwrap_or(libc::STDOUT_FILENO),
         None,
         options.suspend_flag,
-        None,
-        None,
+        options.input_fd,
+        options.gate,
     )
 }
 
@@ -600,69 +665,96 @@ where
             let mut write_child = |bytes: &[u8]| -> bool {
                 bytes.is_empty() || writer.write_all(bytes).is_ok()
             };
+            // Read the next chunk from `input`, classifying the outcome so
+            // the caller can break on EOF or retry after EINTR.
+            enum Chunk {
+                Data(usize),
+                Eof,
+                Again,
+            }
+            let read_chunk = |input: &mut R, buf: &mut [u8]| match input.read(buf) {
+                Ok(0) => Chunk::Eof, // stdin EOF
+                Ok(n) => Chunk::Data(n),
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => Chunk::Again,
+                Err(_) => Chunk::Eof,
+            };
             'pump: loop {
-                // F7: hold the gate mutex across the flag check + poll +
-                // read so TerminalGuard::suspend can only apply the cooked
-                // termios once no read is in flight, and ::resume has
-                // re-applied raw mode before the flag clears. Only the
-                // real-TTY path sets these; the lock is uncontended there.
-                let _gate_lock = match (&gate, input_fd, &suspend_flag) {
-                    (Some(g), Some(_), Some(_)) => Some(g.lock().unwrap()),
-                    _ => None,
-                };
-                // While the terminal is suspended (pager/surface owns it),
-                // do not read stdin: the surface gets the input to itself.
-                // Poll with a short timeout so suspension is noticed even
-                // when no input arrives.
-                if let (Some(fd), Some(flag)) = (input_fd, &suspend_flag) {
+                let n = if let (Some(fd), Some(flag)) = (input_fd, &suspend_flag) {
+                    // Real-TTY path with suspension plumbing (F7).
+                    //
+                    // While the terminal is suspended (pager/surface owns
+                    // it), do not read stdin: the surface gets the input to
+                    // itself. This is a cheap atomic check; the gate is not
+                    // needed to park.
                     if flag.load(Ordering::SeqCst) {
-                        drop(_gate_lock); // park: let suspend/resume proceed
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
-                    let mut pfd = libc::pollfd {
-                        fd,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    };
-                    let rc = unsafe { libc::poll(&mut pfd, 1, 100) };
-                    if rc == 0 {
-                        continue; // no input within 100ms; re-check the flag
+                    // Wait for input WITHOUT holding the gate. (Holding it
+                    // across this 100 ms poll pinned the mutex ~100% of the
+                    // idle time and starved the output pump — and vice
+                    // versa — because a futex-woken waiter always loses to
+                    // the holder's unlock→relock fast path: the keyboard
+                    // went dead / the screen froze until the proxy had to
+                    // be killed. Input must flow from the moment the child
+                    // spawns, before ANY child output.)
+                    match poll_in(fd, 100) {
+                        PollIn::Timeout => continue, // re-check the flag
+                        PollIn::Gone => break 'pump, // stdin went away → EOF policy below
+                        PollIn::Ready => {}
                     }
-                    if rc < 0 {
-                        let err = std::io::Error::last_os_error();
-                        if err.raw_os_error() == Some(libc::EINTR) {
-                            continue;
-                        }
-                        break 'pump;
-                    }
-                    if pfd.revents & libc::POLLIN == 0
-                        && pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0
-                    {
-                        break 'pump;
-                    }
-                }
-                match input.read(&mut buf) {
-                    Ok(0) => break, // stdin EOF
-                    Ok(n) => {
-                        let mut ok = true;
-                        let mut out = |bytes: &[u8]| {
-                            if !write_child(bytes) {
-                                ok = false;
+                    // F7 critical section — bounded to microseconds so it
+                    // can never starve suspend()/resume() or the output
+                    // pump: re-check the flag and the fd's readiness under
+                    // the gate, then read only while both hold. A suspend
+                    // can therefore only apply the cooked termios when no
+                    // raw-mode read is in flight, and a keystroke consumed
+                    // by the surface between our two polls is never stolen
+                    // (readiness is re-polled with a zero timeout, so the
+                    // read below cannot block).
+                    let chunk = {
+                        let _gate_lock = gate.as_ref().map(|g| g.lock().unwrap());
+                        if flag.load(Ordering::SeqCst) {
+                            Chunk::Again // suspended meanwhile; park next round
+                        } else {
+                            match poll_in(fd, 0) {
+                                PollIn::Timeout => Chunk::Again, // surface consumed it
+                                PollIn::Gone => Chunk::Eof,
+                                PollIn::Ready => read_chunk(&mut input, &mut buf),
                             }
-                        };
-                        let mut ev = |e: ProxyEvent| {
-                            let _ = events.try_send(e);
-                        };
-                        for &b in &buf[..n] {
-                            filter.feed(b, &mut out, &mut ev);
                         }
-                        if !ok {
-                            break 'pump; // child is gone
-                        }
+                    };
+                    match chunk {
+                        Chunk::Data(n) => n,
+                        Chunk::Eof => break 'pump,
+                        Chunk::Again => continue 'pump,
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(_) => break,
+                } else {
+                    // Pipe/test path: plain blocking read, no polling.
+                    match read_chunk(&mut input, &mut buf) {
+                        Chunk::Data(n) => n,
+                        Chunk::Eof => break 'pump,
+                        Chunk::Again => continue 'pump,
+                    }
+                };
+                // Forward the chunk through the hotkey filter. The gate is
+                // NOT held here: writing to the child PTY does not touch
+                // the real terminal and may legitimately block on a full
+                // PTY buffer.
+                let mut ok = true;
+                let mut out = |bytes: &[u8]| {
+                    if !write_child(bytes) {
+                        ok = false;
+                    }
+                };
+                let mut ev = |e: ProxyEvent| {
+                    let _ = events.try_send(e);
+                };
+                for &b in &buf[..n] {
+                    filter.feed(b, &mut out, &mut ev);
+                }
+                if !ok {
+                    break 'pump; // child is gone
                 }
             }
             // --- stdin EOF policy (F1) ---
@@ -728,46 +820,35 @@ where
     // captured in a bounded drop-oldest ring and flushed on resume.
     //
     // The pump polls the master fd with a short timeout before every read
-    // (instead of blocking in `read`) for two reasons: suspension and
-    // resume are noticed promptly even when the child is silent, and the
-    // gate mutex — held across flag-check + read + write on the real-TTY
-    // path — is never pinned by an idle blocked read. Holding the gate
-    // across the write is what guarantees TerminalGuard::suspend, once it
-    // returns, that no further child output can reach stdout: any chunk
-    // written before suspend() returns lands on the real terminal BEFORE
-    // the surface is spawned, which is harmless.
+    // (instead of blocking in `read`) so suspension and resume are noticed
+    // promptly even when the child is silent. The poll itself never holds
+    // the gate mutex (polling the child PTY does not touch the real
+    // terminal); the gate is taken only around the terminal-visible steps —
+    // draining the backlog and the read + write of a chunk that a
+    // just-completed poll proved cannot block. Holding the gate across the
+    // write is what guarantees TerminalGuard::suspend, once it returns,
+    // that no further child output can reach stdout (any chunk written
+    // before suspend() returns lands on the real terminal BEFORE the
+    // surface is spawned, which is harmless) — while never holding it
+    // across an idle wait is what keeps the input pump and
+    // suspend()/resume() from starving (see the gate note on TermState).
     let child_fd = master.lock().ok().and_then(|m| m.as_raw_fd());
     let mut backlog = SuspendedOutput::new();
     let mut buf = [0u8; 16384];
     'out: loop {
-        let _gate_lock = match (&gate, &suspend_flag) {
-            (Some(g), Some(_)) => Some(g.lock().unwrap()),
-            _ => None,
-        };
         let suspended = suspend_flag
             .as_ref()
             .map(|f| f.load(Ordering::SeqCst))
             .unwrap_or(false);
         if suspended {
+            // Capture phase. No gate needed: nothing here touches the real
+            // terminal — output goes only into the backlog.
             match child_fd {
-                Some(fd) => {
-                    let mut pfd = libc::pollfd {
-                        fd,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    };
-                    let rc = unsafe { libc::poll(&mut pfd, 1, 50) };
-                    if rc == 0 {
-                        continue; // still suspended; re-check the flag
-                    }
-                    if rc < 0 {
-                        let err = std::io::Error::last_os_error();
-                        if err.raw_os_error() == Some(libc::EINTR) {
-                            continue;
-                        }
-                        break;
-                    }
-                }
+                Some(fd) => match poll_in(fd, 50) {
+                    PollIn::Timeout => continue, // still suspended; re-check the flag
+                    PollIn::Gone => break,
+                    PollIn::Ready => {}
+                },
                 // No fd to poll (should not happen on unix): avoid a
                 // blocking read so resume is still noticed.
                 None => {
@@ -787,34 +868,53 @@ where
             continue 'out;
         }
         // Not suspended: flush anything captured during suspension BEFORE
-        // forwarding new output (ordering), then run the verbatim pump.
-        if !backlog.is_empty() && backlog.drain(&mut output).is_err() {
-            break;
-        }
-        if let Some(fd) = child_fd {
-            let mut pfd = libc::pollfd {
-                fd,
-                events: libc::POLLIN,
-                revents: 0,
+        // forwarding new output (ordering). This runs even when the child
+        // is silent, so a resume drains promptly; the flag is re-checked
+        // under the gate so a concurrent suspend cannot interleave with
+        // the write.
+        if !backlog.is_empty() {
+            let _gate_lock = match (&gate, &suspend_flag) {
+                (Some(g), Some(_)) => Some(g.lock().unwrap()),
+                _ => None,
             };
-            let rc = unsafe { libc::poll(&mut pfd, 1, 100) };
-            if rc == 0 {
-                continue; // idle; re-check the suspension flag
-            }
-            if rc < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EINTR) {
-                    continue;
-                }
+            let still_clear = suspend_flag
+                .as_ref()
+                .map(|f| !f.load(Ordering::SeqCst))
+                .unwrap_or(true);
+            if still_clear && backlog.drain(&mut output).is_err() {
                 break;
             }
         }
+        // Wait for child output WITHOUT holding the gate.
+        if let Some(fd) = child_fd {
+            match poll_in(fd, 100) {
+                PollIn::Timeout => continue, // idle; re-check the suspension flag
+                PollIn::Gone => break,       // read would report EIO/EOF
+                PollIn::Ready => {}
+            }
+        }
+        // Terminal-visible step: take the gate (bounded — the poll above
+        // proved the read cannot block) and re-check the flag under the
+        // lock: if a suspend landed between our poll and the lock, capture
+        // the chunk instead of writing it into the surface's frame.
+        let _gate_lock = match (&gate, &suspend_flag) {
+            (Some(g), Some(_)) => Some(g.lock().unwrap()),
+            _ => None,
+        };
+        let suspended_now = suspend_flag
+            .as_ref()
+            .map(|f| f.load(Ordering::SeqCst))
+            .unwrap_or(false);
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 // First child output: the child is up (past its canonical-mode
                 // startup window); releases the input thread's EOF grace wait.
                 child_ready.store(true, Ordering::SeqCst);
+                if suspended_now {
+                    backlog.push(&buf[..n]);
+                    continue 'out;
+                }
                 if output.write_all(&buf[..n]).is_err() {
                     break;
                 }

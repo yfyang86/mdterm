@@ -17,14 +17,17 @@ use mdterm_pty::{spawn_with_io, HotkeyConfig, SpawnIoOptions};
 fn open_fake_terminal(rows: u16, cols: u16) -> (File, File) {
     let mut master: RawFd = -1;
     let mut slave: RawFd = -1;
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    let mut ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    // libc::openpty's `termp`/`winp` are `*mut` on BSD (macOS) but `*const`
+    // on Linux glibc; `null_mut()` and `&mut ws` coerce to either, so this
+    // compiles on both.
     let rc = unsafe {
         libc::openpty(
             &mut master,
             &mut slave,
             std::ptr::null_mut(),
-            std::ptr::null(),
-            &ws,
+            std::ptr::null_mut(),
+            &mut ws,
         )
     };
     assert_eq!(rc, 0, "openpty failed");
@@ -91,6 +94,7 @@ async fn initial_size_and_sigwinch_propagate_to_child() {
         SpawnIoOptions {
             term_fd: Some(term_master.as_raw_fd()),
             suspend_flag: None,
+            ..Default::default()
         },
     )
     .expect("spawn_with_io failed");

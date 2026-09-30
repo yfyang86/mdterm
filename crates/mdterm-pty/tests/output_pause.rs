@@ -64,6 +64,7 @@ async fn child_output_is_buffered_while_suspended_and_flushed_on_resume() {
         SpawnIoOptions {
             term_fd: None,
             suspend_flag: Some(Arc::clone(&flag)),
+            ..Default::default()
         },
     )
     .expect("spawn_with_io failed");
