@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc;
 
-use crate::{parse_claude_jsonl, CliKind, TranscriptEvent};
+use crate::{parse_transcript, CliKind, TranscriptEvent};
 
 /// Coalescing window for the watcher debounce (F9): after the first
 /// relevant notify event, further events within this window are drained
@@ -18,8 +18,9 @@ use crate::{parse_claude_jsonl, CliKind, TranscriptEvent};
 const DEBOUNCE_MS: u64 = 200;
 
 /// Watch a transcript file (or its parent dir) with `notify`; on each
-/// change, re-parse and emit `TranscriptEvent::Updated`.
-pub fn watch_transcript(path: PathBuf, kind: CliKind) -> mpsc::Receiver<TranscriptEvent> {
+/// change, re-parse and emit `TranscriptEvent::Updated`. `kind` pins the
+/// provider parser; `None` sniffs the format on every re-parse.
+pub fn watch_transcript(path: PathBuf, kind: Option<CliKind>) -> mpsc::Receiver<TranscriptEvent> {
     let (tx, rx) = mpsc::channel(64);
 
     let dir = path
@@ -134,11 +135,8 @@ fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     a == b || a.ends_with(b) || b.ends_with(a) || a.file_name() == b.file_name()
 }
 
-fn emit(path: &std::path::Path, kind: CliKind, tx: &mpsc::Sender<TranscriptEvent>) {
-    // Kimi transcripts are not yet format-verified; Claude's JSONL parser is
-    // used best-effort for both (unknown lines are skipped, never fatal).
-    let _ = kind;
-    match parse_claude_jsonl(path) {
+fn emit(path: &std::path::Path, kind: Option<CliKind>, tx: &mpsc::Sender<TranscriptEvent>) {
+    match parse_transcript(path, kind) {
         Ok(session) => {
             let _ = tx.blocking_send(TranscriptEvent::Updated(session));
         }
