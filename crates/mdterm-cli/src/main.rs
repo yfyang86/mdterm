@@ -8,8 +8,8 @@ use std::sync::{Arc, RwLock};
 use anyhow::{anyhow, Context};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use mdterm_core::{
-    discover_latest_session, parse_claude_jsonl, watch_transcript, CliKind, Role, Session,
-    TranscriptEvent,
+    discover_latest_any, discover_latest_session, parse_transcript, watch_transcript, CliKind,
+    Role, Session, TranscriptEvent,
 };
 use mdterm_pty::{HotkeyConfig, ProxyEvent, PtyProxy, TerminalGuard};
 use mdterm_render::{render_markdown, MathMode, RenderOptions, TerminalCaps, Theme};
@@ -43,6 +43,9 @@ struct WrapArgs {
     /// Transcript file to watch (default: discover latest for the wrapped CLI).
     #[arg(long)]
     transcript: Option<PathBuf>,
+    /// Transcript provider (default: inferred from the wrapped command).
+    #[arg(long, value_enum)]
+    provider: Option<ProviderArg>,
     /// Enable/disable hotkey chord interception (Ctrl-G r / Ctrl-G b).
     #[arg(long, value_enum, default_value_t = HotkeyMode::On)]
     hotkeys: HotkeyMode,
@@ -53,9 +56,12 @@ struct WrapArgs {
 
 #[derive(Args)]
 struct ServeArgs {
-    /// Transcript file to watch (default: discover latest Claude, then Kimi).
+    /// Transcript file to watch (default: discover latest across providers).
     #[arg(long)]
     transcript: Option<PathBuf>,
+    /// Transcript provider (default: inferred from discovery / sniffed).
+    #[arg(long, value_enum)]
+    provider: Option<ProviderArg>,
     /// Port to bind (0 = OS-assigned).
     #[arg(long, default_value_t = 0)]
     port: u16,
@@ -69,9 +75,12 @@ struct RenderArgs {
     /// Render the whole session (default).
     #[arg(long)]
     all: bool,
-    /// Transcript file to render (default: discover latest Claude, then Kimi).
+    /// Transcript file to render (default: discover latest across providers).
     #[arg(long, conflicts_with = "file")]
     transcript: Option<PathBuf>,
+    /// Transcript provider (default: sniffed from the file's contents).
+    #[arg(long, value_enum)]
+    provider: Option<ProviderArg>,
     /// Render a plain markdown file instead of a transcript.
     #[arg(long)]
     file: Option<PathBuf>,
@@ -81,6 +90,26 @@ struct RenderArgs {
     /// Wrap width in columns (default: terminal width, else 100).
     #[arg(long)]
     width: Option<usize>,
+}
+
+/// `--provider` values, mapping 1:1 onto [`CliKind`].
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ProviderArg {
+    Claude,
+    Codex,
+    Kimi,
+    Selfdefined,
+}
+
+impl From<ProviderArg> for CliKind {
+    fn from(p: ProviderArg) -> Self {
+        match p {
+            ProviderArg::Claude => CliKind::Claude,
+            ProviderArg::Codex => CliKind::Codex,
+            ProviderArg::Kimi => CliKind::Kimi,
+            ProviderArg::Selfdefined => CliKind::Selfdefined,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -132,7 +161,10 @@ async fn main() -> anyhow::Result<()> {
 
 async fn wrap(args: WrapArgs) -> anyhow::Result<()> {
     let (cmd, cmd_args) = resolve_wrap_command(&args.cmd)?;
-    let kind = cli_kind_for_command(&cmd);
+    let kind = args
+        .provider
+        .map(CliKind::from)
+        .unwrap_or_else(|| cli_kind_for_command(&cmd));
 
     let mut hotkeys = HotkeyConfig::default();
     hotkeys.enabled = args.hotkeys == HotkeyMode::On;
@@ -160,7 +192,7 @@ async fn wrap(args: WrapArgs) -> anyhow::Result<()> {
                             transcript = discover_latest_session(kind);
                         }
                         match &transcript {
-                            Some(path) => match start_viewer(path.clone(), kind, 0).await {
+                            Some(path) => match start_viewer(path.clone(), Some(kind), 0).await {
                                 Ok(port) => {
                                     viewer_port = Some(port);
                                     eprintln!("[mdterm] viewer: http://127.0.0.1:{port}/ (watching {})", path.display());
@@ -188,7 +220,7 @@ async fn wrap(args: WrapArgs) -> anyhow::Result<()> {
                         if let Some(path) = &transcript {
                             session_task = Some(spawn_session_task(
                                 path.clone(),
-                                kind,
+                                Some(kind),
                                 session.clone(),
                             ));
                         }
@@ -231,7 +263,7 @@ async fn wrap(args: WrapArgs) -> anyhow::Result<()> {
 /// Forward watch_transcript events into the shared session slot.
 fn spawn_session_task(
     path: PathBuf,
-    kind: CliKind,
+    kind: Option<CliKind>,
     session: Arc<RwLock<Session>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -256,18 +288,18 @@ async fn wait_child(child: &mut tokio::task::JoinHandle<i32>) -> i32 {
 }
 
 /// The command to wrap: explicit args after `--`, else auto-detect
-/// `claude` or `kimi` on PATH (claude wins if both exist).
+/// `claude`, `kimi` or `codex` on PATH (first match wins).
 fn resolve_wrap_command(cmd: &[String]) -> anyhow::Result<(String, Vec<String>)> {
     if let Some((first, rest)) = cmd.split_first() {
         return Ok((first.clone(), rest.to_vec()));
     }
-    for name in ["claude", "kimi"] {
+    for name in ["claude", "kimi", "codex"] {
         if which(name).is_some() {
             return Ok((name.to_string(), Vec::new()));
         }
     }
     Err(anyhow!(
-        "no command given and neither `claude` nor `kimi` found on PATH; \
+        "no command given and none of `claude`, `kimi`, `codex` found on PATH; \
          usage: mdterm wrap -- <cmd> [args...]"
     ))
 }
@@ -276,6 +308,8 @@ fn cli_kind_for_command(cmd: &str) -> CliKind {
     let base = cmd.rsplit('/').next().unwrap_or(cmd);
     if base.contains("kimi") {
         CliKind::Kimi
+    } else if base.contains("codex") {
+        CliKind::Codex
     } else {
         CliKind::Claude
     }
@@ -313,7 +347,7 @@ fn is_executable(path: &std::path::Path) -> bool {
 // ---------------------------------------------------------------------------
 
 async fn serve(args: ServeArgs) -> anyhow::Result<()> {
-    let (path, kind) = resolve_transcript(args.transcript)?;
+    let (path, kind) = resolve_transcript(args.transcript, args.provider)?;
     let port = start_viewer(path.clone(), kind, args.port).await?;
     println!("mdterm viewer: http://127.0.0.1:{port}/");
     println!("watching {} (Ctrl-C to quit)", path.display());
@@ -327,8 +361,8 @@ async fn render(args: RenderArgs) -> anyhow::Result<()> {
         std::fs::read_to_string(file)
             .with_context(|| format!("reading markdown file {}", file.display()))?
     } else {
-        let (path, _kind) = resolve_transcript(args.transcript)?;
-        let session = parse_claude_jsonl(&path)
+        let (path, kind) = resolve_transcript(args.transcript, args.provider)?;
+        let session = parse_transcript(&path, kind)
             .with_context(|| format!("parsing transcript {}", path.display()))?;
         if args.last {
             session
@@ -486,26 +520,39 @@ fn terminal_width() -> usize {
 // shared helpers
 // ---------------------------------------------------------------------------
 
-/// Resolve the transcript to watch/render: explicit `--transcript`, else
-/// discovery (Claude first, then Kimi best-effort).
-fn resolve_transcript(explicit: Option<PathBuf>) -> anyhow::Result<(PathBuf, CliKind)> {
+/// Resolve the transcript to watch/render and the provider to parse it
+/// with. Explicit `--transcript` wins; `--provider` pins the parser (and
+/// the discovery root when no transcript is given). With neither, the
+/// newest transcript across all providers is used; with `--transcript`
+/// alone the format is sniffed from the file's contents.
+fn resolve_transcript(
+    explicit: Option<PathBuf>,
+    provider: Option<ProviderArg>,
+) -> anyhow::Result<(PathBuf, Option<CliKind>)> {
+    let kind = provider.map(CliKind::from);
     if let Some(path) = explicit {
-        return Ok((path, CliKind::Claude));
+        return Ok((path, kind));
     }
-    if let Some(path) = discover_latest_session(CliKind::Claude) {
-        return Ok((path, CliKind::Claude));
+    match kind {
+        Some(CliKind::Selfdefined) => Err(anyhow!(
+            "--provider selfdefined has no discovery roots; pass --transcript <path>"
+        )),
+        Some(k) => discover_latest_session(k).map(|p| (p, Some(k))).ok_or_else(|| {
+            anyhow!("no {k:?} transcript found; pass --transcript <path>")
+        }),
+        None => discover_latest_any()
+            .map(|(p, k)| (p, Some(k)))
+            .ok_or_else(|| {
+                anyhow!(
+                    "no transcript found under ~/.claude/projects, ~/.kimi-code/sessions, \
+                     ~/.kimi/sessions or ~/.codex/sessions; pass --transcript <path>"
+                )
+            }),
     }
-    if let Some(path) = discover_latest_session(CliKind::Kimi) {
-        return Ok((path, CliKind::Kimi));
-    }
-    Err(anyhow!(
-        "no transcript found under ~/.claude/projects or ~/.kimi; \
-         pass --transcript <path>"
-    ))
 }
 
 /// Start the file watcher + viewer server; returns the actual bound port.
-async fn start_viewer(path: PathBuf, kind: CliKind, port: u16) -> anyhow::Result<u16> {
+async fn start_viewer(path: PathBuf, kind: Option<CliKind>, port: u16) -> anyhow::Result<u16> {
     if !path.is_file() {
         return Err(anyhow!("transcript {} does not exist", path.display()));
     }
