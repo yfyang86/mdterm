@@ -3,7 +3,8 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Yifan Yang <yfyang.86@hotmail.com>"]
 license = "MIT"
+repository = "https://github.com/yfyang86/mdterm"

@@ -11,7 +11,7 @@ format; `--provider <claude|codex|kimi|selfdefined>` on wrap/serve/render;
 transcript across all providers (no more "Claude always wins"). All 20 core
 tests pass; verified live against real kimi/codex sessions.
 
-## Checking render output in real time (`mdterm wrap -- kimi`)
+## Checking render output in real time (`mdterm-llm wrap -- kimi`)
 
 `wrap` renders to surfaces *outside* the wrapped CLI's TUI:
 
@@ -23,9 +23,9 @@ tests pass; verified live against real kimi/codex sessions.
   - `Ctrl-G r` — render last assistant message in terminal: tmux popup if
     `$TMUX` set → `less -R` → direct stdout dump (fallback chain).
   - `Ctrl-G b` — open/focus the browser viewer.
-- **From a second terminal**: `mdterm serve` (live viewer, prints its own
-  port), `mdterm render --last` / `--all` (one-shot ANSI to stdout).
-- Debug logging: `RUST_LOG=mdterm=debug`.
+- **From a second terminal**: `mdterm-llm serve` (live viewer, prints its own
+  port), `mdterm-llm render --last` / `--all` (one-shot ANSI to stdout).
+- Debug logging: `RUST_LOG=mdterm_llm=debug`.
 
 ## Pitfall (historical): `render` / `serve` showed Claude, not kimi
 
@@ -74,13 +74,13 @@ kimi session list --limit 1 --json | jq -r '.[0].sessionDir + "/agents/main/wire
   `session_e3636907-5b05-46d9-8a73-882f8ff61909` under
   `~/.kimi-code/sessions/wd_yifanyang_22aec0c79573/`.
 
-## Resuming a wrapped session (`mdterm wrap -- kimi -S …`)
+## Resuming a wrapped session (`mdterm-llm wrap -- kimi -S …`)
 
 Always resume a wrap-created session **through the wrapper** and **from
 the same working directory** it was started in:
 
 ```bash
-mdterm wrap -- kimi -S <session-id>     # or: mdterm wrap -- kimi -c
+mdterm-llm wrap -- kimi -S <session-id>     # or: mdterm-llm wrap -- kimi -c
 ```
 
 - Kimi stores sessions per working directory
@@ -100,12 +100,12 @@ mdterm wrap -- kimi -S <session-id>     # or: mdterm wrap -- kimi -c
 `wrap` / `serve` / `render` all take `--provider <claude|codex|kimi|
 selfdefined>`:
 
-- `mdterm serve --transcript <file>` — provider sniffed from contents;
+- `mdterm-llm serve --transcript <file>` — provider sniffed from contents;
   all kimi shapes, codex rollouts and selfdefined files work directly.
-- `mdterm serve` / `mdterm render` — newest transcript across all
+- `mdterm-llm serve` / `mdterm-llm render` — newest transcript across all
   provider roots (`~/.claude/projects`, `~/.kimi-code/sessions`,
   `~/.kimi/sessions`, `~/.codex/sessions`).
-- `mdterm serve --provider kimi` — restrict discovery to kimi roots;
+- `mdterm-llm serve --provider kimi` — restrict discovery to kimi roots;
   `--provider selfdefined` requires `--transcript` (no roots).
 
 Self-defined format (canonical mdterm JSONL):
@@ -126,24 +126,24 @@ Overwriting a running-signed binary in place (`cp` over
 `~/.local/bin/mdterm`) gets it `Killed: 9` by the kernel's signature
 cache. `rm` the destination first, then `cp`.
 
-## Switching sessions in `mdterm serve`
+## Switching sessions in `mdterm-llm serve`
 
 Not possible at runtime: the server exposes only GET routes (`/`, `/events`,
 `/api/session`, `/assets/*` — see `mdterm-viewer/src/lib.rs:83-88`) and the
 watched transcript is fixed at startup. Options:
 
 - Restart with the other transcript:
-  `mdterm serve --transcript <path> [--port N]`
+  `mdterm-llm serve --transcript <path> [--port N]`
 - Pin `--port N` so the URL stays stable across restarts.
 - Run several `serve` instances on different ports to watch sessions in
   parallel.
-- Under `mdterm wrap -- <cli>`, the viewer follows the wrapped CLI's
+- Under `mdterm-llm wrap -- <cli>`, the viewer follows the wrapped CLI's
   discovered session automatically — wrap is the per-session workflow;
   `serve` is the standalone fixed-transcript one.
 
 ## Workaround (obsolete): live-view a kimi session on the pre-fix v0.1.0
 
-**Not needed anymore** — `mdterm serve --transcript <kimi wire.jsonl>`
+**Not needed anymore** — `mdterm-llm serve --transcript <kimi wire.jsonl>`
 parses natively now. Kept for reference: the trick was converting kimi
 wire events into Claude-shaped lines with jq and serving the converted
 file. The sniff/dispatch layer does this properly in-process now.
@@ -164,10 +164,10 @@ FILTER='select(.type=="agent.message.appended") | .message.message as $m
      message:{role:$m.role, content:[{type:"text", text:$t}]}}'
 
 tail -n +1 -F "$WIRE" | jq --unbuffered -c "$FILTER" >> "$OUT" &   # converter
-mdterm serve --port 7777 --transcript "$OUT"    # live: http://127.0.0.1:7777/
+mdterm-llm serve --port 7777 --transcript "$OUT"    # live: http://127.0.0.1:7777/
 ```
 
 - Shows user prompts + assistant text; think/tool events are filtered out.
-- Same file works for one-shots: `mdterm render --last --transcript "$OUT"`.
+- Same file works for one-shots: `mdterm-llm render --last --transcript "$OUT"`.
 - Stop with Ctrl-C on serve and `kill %1` for the converter.
 </details>

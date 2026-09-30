@@ -17,7 +17,7 @@ use mdterm_viewer::ViewerServer;
 
 #[derive(Parser)]
 #[command(
-    name = "mdterm",
+    name = "mdterm-llm",
     version,
     about = "Wrap AI coding CLIs and render their markdown output on separate surfaces"
 )]
@@ -49,7 +49,7 @@ struct WrapArgs {
     /// Enable/disable hotkey chord interception (Ctrl-G r / Ctrl-G b).
     #[arg(long, value_enum, default_value_t = HotkeyMode::On)]
     hotkeys: HotkeyMode,
-    /// Command (and args) to wrap, e.g. `mdterm wrap -- claude --debug`.
+    /// Command (and args) to wrap, e.g. `mdterm-llm wrap -- claude --debug`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     cmd: Vec<String>,
 }
@@ -142,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mdterm=info".into()),
+                .unwrap_or_else(|_| "mdterm_llm=info".into()),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -300,7 +300,7 @@ fn resolve_wrap_command(cmd: &[String]) -> anyhow::Result<(String, Vec<String>)>
     }
     Err(anyhow!(
         "no command given and none of `claude`, `kimi`, `codex` found on PATH; \
-         usage: mdterm wrap -- <cmd> [args...]"
+         usage: mdterm-llm wrap -- <cmd> [args...]"
     ))
 }
 

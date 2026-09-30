@@ -1,5 +1,5 @@
-//! End-to-end regression test for the dead-keyboard bug in `mdterm wrap`:
-//! drive the real `mdterm` binary with a nested PTY as its "real terminal"
+//! End-to-end regression test for the dead-keyboard bug in `mdterm-llm wrap`:
+//! drive the real `mdterm-llm` binary with a nested PTY as its "real terminal"
 //! (there may be no controlling TTY under cargo test), type at it, and
 //! assert the child receives the keystrokes from the moment the session
 //! starts. A `script(1)`-based variant reproduces the original reported
@@ -84,7 +84,7 @@ fn wrap_forwards_keyboard_input_from_session_start() {
     let slave_fd = slave.as_raw_fd();
     let stdin = unsafe { Stdio::from_raw_fd(libc::dup(slave_fd)) };
     let stdout = unsafe { Stdio::from_raw_fd(libc::dup(slave_fd)) };
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mdterm"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mdterm-llm"))
         .args(["wrap", "--hotkeys", "off", "--", "cat"])
         .stdin(stdin)
         .stdout(stdout)
@@ -143,7 +143,7 @@ fn script_session_forwards_piped_input_to_child() {
         eprintln!("skipping: script(1) invocation is util-linux specific");
         return;
     }
-    let mdterm = env!("CARGO_BIN_EXE_mdterm");
+    let mdterm = env!("CARGO_BIN_EXE_mdterm-llm");
     let mut child = Command::new("script")
         .args(["-qec", &format!("{mdterm} wrap --hotkeys off -- cat"), "/dev/null"])
         .stdin(Stdio::piped())

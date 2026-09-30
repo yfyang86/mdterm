@@ -24,7 +24,7 @@ mdterm/
 Requires a stable Rust toolchain (developed against 1.98; edition 2021).
 
 ```bash
-cargo build --release          # binary at target/release/mdterm
+cargo build --release          # binary at target/release/mdterm-llm
 cargo test --workspace         # run the test suite
 ```
 
@@ -33,7 +33,7 @@ cargo test --workspace         # run the test suite
 ```bash
 cargo install --path crates/mdterm-cli
 # or copy the binary somewhere on PATH:
-cp target/release/mdterm ~/.local/bin/
+cp target/release/mdterm-llm ~/.local/bin/
 ```
 
 ## Usage
@@ -41,8 +41,8 @@ cp target/release/mdterm ~/.local/bin/
 ### Claude Code
 
 ```bash
-mdterm wrap                       # auto-detects `claude` on PATH
-mdterm wrap -- claude --debug     # explicit command + args
+mdterm-llm wrap                       # auto-detects `claude` on PATH
+mdterm-llm wrap -- claude --debug     # explicit command + args
 ```
 
 While wrapped, press a hotkey chord (see below): `Ctrl-G b` opens the live
@@ -53,16 +53,16 @@ dump, see "Terminal render surface" below).
 ### Kimi CLI
 
 ```bash
-mdterm wrap -- kimi
+mdterm-llm wrap -- kimi
 ```
 
 ### Codex
 
 ```bash
-mdterm wrap -- codex
+mdterm-llm wrap -- codex
 ```
 
-`mdterm wrap` with no command auto-detects `claude`, then `kimi`, then
+`mdterm-llm wrap` with no command auto-detects `claude`, then `kimi`, then
 `codex` on PATH.
 
 ### Providers and transcripts
@@ -115,7 +115,7 @@ one JSON object per line:
 ### Standalone viewer
 
 ```bash
-mdterm serve [--transcript <path>] [--port N]   # default port 0 = OS-assigned
+mdterm-llm serve [--transcript <path>] [--port N]   # default port 0 = OS-assigned
 ```
 
 Watches the transcript and serves the viewer at `http://127.0.0.1:<port>/`.
@@ -125,7 +125,7 @@ Routes: `/` (single-page app), `/events` (SSE stream of full-session JSON),
 ### One-shot render
 
 ```bash
-mdterm render [--last|--all] [--transcript <path>]
+mdterm-llm render [--last|--all] [--transcript <path>]
               [--file <path.md>] [--math auto|unicode|image|off] [--width N]
 ```
 
@@ -138,7 +138,7 @@ width (or 100 when not a TTY). `--math` controls `$...$` / `$$...$$` math
 ### Terminal capabilities
 
 ```bash
-mdterm caps
+mdterm-llm caps
 ```
 
 Prints the detected terminal capabilities: terminal program, graphics
@@ -210,7 +210,7 @@ dropped.
 
 ## Hotkeys
 
-Active while running under `mdterm wrap` (disable with `--hotkeys off`).
+Active while running under `mdterm-llm wrap` (disable with `--hotkeys off`).
 A chord is only consumed when it fully matches; all other input passes
 through to the CLI untouched.
 
@@ -256,7 +256,7 @@ time; no CDN is contacted at runtime):
   an older session from another project may win. Use `--transcript`.
 - **Hotkeys do nothing** — check they were not disabled (`--hotkeys off`),
   and that the chord is pressed as a sequence (Ctrl-G, release, then `r`/`b`).
-- **Debug logging** — set `RUST_LOG=mdterm=debug` (logs go to stderr).
+- **Debug logging** — set `RUST_LOG=mdterm_llm=debug` (logs go to stderr).
 
 ## Development
 

@@ -4,21 +4,22 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "mdterm binary: PTY-proxy wrapper + markdown render surfaces"
 
 [[bin]]
-name = "mdterm"
+name = "mdterm-llm"
 path = "src/main.rs"
 
 [dependencies]
-mdterm-core = { path = "../mdterm-core" }
-mdterm-viewer = { path = "../mdterm-viewer" }
+mdterm-core = { path = "../mdterm-core", version = "0.3.0" }
+mdterm-viewer = { path = "../mdterm-viewer", version = "0.3.0" }
 # mdterm-pty is implemented on a parallel branch; the path dependency is
 # declared so the workspace merges cleanly. `wrap` code is written against
 # the spec'd public API (PtyProxy::spawn, HotkeyConfig, ProxyEvent) behind
 # a stub until the crate lands.
-mdterm-pty = { path = "../mdterm-pty" }
-mdterm-render = { path = "../mdterm-render" }
+mdterm-pty = { path = "../mdterm-pty", version = "0.3.0" }
+mdterm-render = { path = "../mdterm-render", version = "0.3.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"

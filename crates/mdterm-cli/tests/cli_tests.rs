@@ -15,7 +15,7 @@ fn fixture_transcript() -> (tempfile::TempDir, std::path::PathBuf) {
 
 #[test]
 fn help_lists_all_subcommands() {
-    let out = Command::new(env!("CARGO_BIN_EXE_mdterm"))
+    let out = Command::new(env!("CARGO_BIN_EXE_mdterm-llm"))
         .arg("--help")
         .output()
         .unwrap();
@@ -28,7 +28,7 @@ fn help_lists_all_subcommands() {
 
 #[test]
 fn caps_prints_detection() {
-    let out = Command::new(env!("CARGO_BIN_EXE_mdterm"))
+    let out = Command::new(env!("CARGO_BIN_EXE_mdterm-llm"))
         .arg("caps")
         .output()
         .unwrap();
@@ -51,7 +51,7 @@ fn render_file_emits_ansi_for_table_code_and_math() {
          Inline math $\\alpha + \\frac{1}{2}$ here.\n",
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_mdterm"))
+    let out = Command::new(env!("CARGO_BIN_EXE_mdterm-llm"))
         .args(["render", "--file"])
         .arg(&path)
         .args(["--math", "unicode", "--width", "60"])
@@ -76,7 +76,7 @@ fn render_transcript_last_message() {
         ),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_mdterm"))
+    let out = Command::new(env!("CARGO_BIN_EXE_mdterm-llm"))
         .args(["render", "--last", "--transcript"])
         .arg(&path)
         .output()
@@ -92,7 +92,7 @@ fn render_transcript_last_message() {
 #[test]
 fn serve_watches_transcript_and_serves_session() {
     let (_dir, path) = fixture_transcript();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mdterm"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mdterm-llm"))
         .args(["serve", "--transcript"])
         .arg(&path)
         .args(["--port", "0"])

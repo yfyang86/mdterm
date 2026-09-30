@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "HTML viewer server (axum + SSE) for mdterm"
 
 [dependencies]
-mdterm-core = { path = "../mdterm-core" }
+mdterm-core = { path = "../mdterm-core", version = "0.3.0" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

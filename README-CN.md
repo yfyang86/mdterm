@@ -23,7 +23,7 @@ mdterm/
 需要稳定版 Rust 工具链（开发基于 1.98；edition 2021）。
 
 ```bash
-cargo build --release          # 产物位于 target/release/mdterm
+cargo build --release          # 产物位于 target/release/mdterm-llm
 cargo test --workspace         # 运行测试套件
 ```
 
@@ -32,7 +32,7 @@ cargo test --workspace         # 运行测试套件
 ```bash
 cargo install --path crates/mdterm-cli
 # 或将可执行文件复制到 PATH 上的任意位置：
-cp target/release/mdterm ~/.local/bin/
+cp target/release/mdterm-llm ~/.local/bin/
 ```
 
 ## 使用方法
@@ -40,8 +40,8 @@ cp target/release/mdterm ~/.local/bin/
 ### Claude Code
 
 ```bash
-mdterm wrap                       # 自动检测 PATH 上的 `claude`
-mdterm wrap -- claude --debug     # 显式指定命令及其参数
+mdterm-llm wrap                       # 自动检测 PATH 上的 `claude`
+mdterm-llm wrap -- claude --debug     # 显式指定命令及其参数
 ```
 
 在代理模式下，按下热键组合（见下文）：`Ctrl-G b` 打开当前会话的实时
@@ -51,16 +51,16 @@ mdterm wrap -- claude --debug     # 显式指定命令及其参数
 ### Kimi CLI
 
 ```bash
-mdterm wrap -- kimi
+mdterm-llm wrap -- kimi
 ```
 
 ### Codex
 
 ```bash
-mdterm wrap -- codex
+mdterm-llm wrap -- codex
 ```
 
-`mdterm wrap` 在不指定命令时，会依次按 `claude` → `kimi` → `codex`
+`mdterm-llm wrap` 在不指定命令时，会依次按 `claude` → `kimi` → `codex`
 的顺序在 PATH 上进行自动检测。
 
 ### 提供商与会话记录
@@ -111,7 +111,7 @@ kimi `context.jsonl`；Codex rollouts（`response_item` 消息与工具调用，
 ### 独立查看器
 
 ```bash
-mdterm serve [--transcript <path>] [--port N]   # 默认端口 0 = 由操作系统分配
+mdterm-llm serve [--transcript <path>] [--port N]   # 默认端口 0 = 由操作系统分配
 ```
 
 监听会话记录，并将查看器服务于 `http://127.0.0.1:<port>/`。路由：
@@ -121,7 +121,7 @@ mdterm serve [--transcript <path>] [--port N]   # 默认端口 0 = 由操作系�
 ### 一次性渲染
 
 ```bash
-mdterm render [--last|--all] [--transcript <path>]
+mdterm-llm render [--last|--all] [--transcript <path>]
               [--file <path.md>] [--math auto|unicode|image|off] [--width N]
 ```
 
@@ -133,7 +133,7 @@ mdterm render [--last|--all] [--transcript <path>]
 ### 终端能力探测
 
 ```bash
-mdterm caps
+mdterm-llm caps
 ```
 
 输出探测到的终端能力：终端程序、图形协议（`kitty` / `iterm2` / `sixel` /
@@ -201,7 +201,7 @@ PATH 上存在 `img2sixel` 转换器时可用，否则链路降级至 Unicode。
 
 ## 热键
 
-仅在 `mdterm wrap` 代理模式下生效（可通过 `--hotkeys off` 关闭）。
+仅在 `mdterm-llm wrap` 代理模式下生效（可通过 `--hotkeys off` 关闭）。
 组合键仅在完全匹配时生效；其他所有输入均原样透传至 CLI。
 
 | 组合键      | 动作                                                |
@@ -244,7 +244,7 @@ KaTeX 数学公式（`$...$`、`$$...$$`、`\(...\)`、`\[...\]`）以及 mermai
   的较旧会话可能会胜出。请使用 `--transcript` 显式指定。
 - **热键无响应** —— 检查是否已被禁用（`--hotkeys off`），并确认组合键
   以序列方式按下（Ctrl-G，松开，再按 `r` / `b`）。
-- **调试日志** —— 设置 `RUST_LOG=mdterm=debug`（日志输出至 stderr）。
+- **调试日志** —— 设置 `RUST_LOG=mdterm_llm=debug`（日志输出至 stderr）。
 
 ## 开发
 
