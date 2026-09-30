@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mdterm viewer</title>
+<link rel="stylesheet" href="/assets/katex.min.css">
+<link rel="stylesheet" href="/assets/hljs-github-dark.min.css">
+<style>
+  /* Dark, low-saturation theme */
+  :root {
+    --bg: #16181d;
+    --bg-raise: #1d2026;
+    --bg-inset: #12141a;
+    --border: #2b2f38;
+    --fg: #c8cdd5;
+    --fg-dim: #8b919c;
+    --accent: #7d9bbf;
+    --user: #8fa3bf;
+    --assistant: #9bb08a;
+    --tool: #b09a8a;
+    --system: #9a9a9a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 1em; align-items: baseline;
+    padding: 0.6em 1.2em;
+    background: var(--bg-raise); border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--fg-dim);
+  }
+  header .title { font-weight: 600; color: var(--fg); }
+  header .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; background: #a05a5a; }
+  header .dot.live { background: #6a9a6a; }
+  main { max-width: 860px; margin: 0 auto; padding: 1.5em 1.2em 40vh; }
+  .msg { margin: 0 0 1.6em; padding: 0.9em 1.1em; border-radius: 8px;
+         background: var(--bg-raise); border: 1px solid var(--border); }
+  .msg .role {
+    display: inline-block; margin-bottom: 0.5em; padding: 0.1em 0.6em;
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    background: var(--bg-inset); border: 1px solid var(--border);
+  }
+  .msg.user .role { color: var(--user); }
+  .msg.assistant .role { color: var(--assistant); }
+  .msg.tool .role { color: var(--tool); }
+  .msg.system .role { color: var(--system); }
+  .msg .meta { float: right; font-size: 11px; color: var(--fg-dim); }
+  .msg .body > :first-child { margin-top: 0; }
+  .msg .body > :last-child { margin-bottom: 0; }
+  h1, h2, h3, h4 { color: var(--fg); line-height: 1.3; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--bg-inset); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.1em 0.35em;
+    font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  pre { background: var(--bg-inset); border: 1px solid var(--border);
+        border-radius: 6px; padding: 0.8em 1em; overflow-x: auto; }
+  pre code { background: none; border: none; padding: 0; }
+  blockquote { margin: 0.8em 0; padding: 0.1em 1em;
+               border-left: 3px solid var(--border); color: var(--fg-dim); }
+  table { border-collapse: collapse; margin: 0.8em 0; width: auto; }
+  th, td { border: 1px solid var(--border); padding: 0.35em 0.8em; }
+  th { background: var(--bg-inset); }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+  img { max-width: 100%; }
+  hr { border: none; border-top: 1px solid var(--border); }
+  .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
+  .mermaid { text-align: center; margin: 1em 0; }
+  .empty { color: var(--fg-dim); text-align: center; padding: 4em 0; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">mdterm</span>
+  <span id="session-id">no session</span>
+  <span id="kind"></span>
+  <span style="margin-left:auto"><span class="dot" id="live-dot"></span><span id="live-label">connecting</span></span>
+</header>
+<main id="messages"><div class="empty">Waiting for transcript events&hellip;</div></main>
+
+<script src="/assets/markdown-it.min.js"></script>
+<script src="/assets/highlight.min.js"></script>
+<script src="/assets/katex.min.js"></script>
+<script src="/assets/mermaid.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var md = window.markdownit({
+    html: false,
+    linkify: true,
+    highlight: function (str, lang) {
+      if (lang && window.hljs && hljs.getLanguage(lang)) {
+        try { return hljs.highlight(str, { language: lang }).value; } catch (e) {}
+      } else if (window.hljs) {
+        try { return hljs.highlightAuto(str).value; } catch (e) {}
+      }
+      return md.utils.escapeHtml(str);
+    }
+  });
+
+  if (window.mermaid) {
+    // securityLevel "strict": diagram labels come from transcript content
+    // (attacker-influenceable); "loose" renders raw HTML labels, which is
+    // an XSS sink on the 127.0.0.1 origin (could exfiltrate /api/session).
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+  }
+
+  // --- Math protection -----------------------------------------------------
+  // markdown-it would mangle `_` etc. inside $...$, so pull math spans out
+  // before markdown rendering and splice rendered KaTeX back in afterwards.
+  var MATH_TOKEN = /MDTERMMATH(\d+)END/g;
+  // Regions where `$...$` must NOT be treated as math (F5): fenced code,
+  // inline code, inline link/image destinations `[text](url)`, link
+  // reference definitions `[label]: url`, and 4-space indented code lines.
+  var NO_MATH = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]+`|!?\[[^\]\n]*\]\([^)\n]*\)|(?:^|\n)\[[^\]\n]+\]:[^\n]*|(?:^|\n)(?: {4}|\t)[^\n]*)/g;
+  function protectMath(src, store) {
+    // Split off protected regions first: no math extraction inside them.
+    var parts = src.split(NO_MATH);
+    for (var i = 0; i < parts.length; i += 2) {
+      parts[i] = parts[i]
+        .replace(/\$\$([\s\S]+?)\$\$/g, function (_, t) { return tok(t, true); })
+        .replace(/\\\[([\s\S]+?)\\\]/g, function (_, t) { return tok(t, true); })
+        .replace(/\\\(([\s\S]+?)\\\)/g, function (_, t) { return tok(t, false); })
+        .replace(/\$([^$\n]+?)\$/g, function (_, t) { return tok(t, false); });
+    }
+    function tok(tex, display) {
+      store.push({ tex: tex, display: display });
+      return (display ? "\n\n" : "") + "MDTERMMATH" + (store.length - 1) + "END" + (display ? "\n\n" : "");
+    }
+    return parts.join("");
+  }
+
+  function restoreMath(el, store) {
+    if (!store.length) return;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function (node) {
+      var text = node.nodeValue;
+      MATH_TOKEN.lastIndex = 0;
+      if (!MATH_TOKEN.test(text)) return;
+      MATH_TOKEN.lastIndex = 0;
+      var frag = document.createDocumentFragment(), last = 0, m;
+      while ((m = MATH_TOKEN.exec(text))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var item = store[Number(m[1])];
+        var span = document.createElement("span");
+        try {
+          window.katex.render(item.tex, span, { displayMode: item.display, throwOnError: false });
+        } catch (e) {
+          span.textContent = (item.display ? "$$" : "$") + item.tex + (item.display ? "$$" : "$");
+        }
+        frag.appendChild(span);
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    });
+  }
+
+  function renderMermaid(container) {
+    if (!window.mermaid) return;
+    var blocks = container.querySelectorAll('pre > code.language-mermaid');
+    if (!blocks.length) return;
+    var nodes = [];
+    blocks.forEach(function (code) {
+      var div = document.createElement("div");
+      div.className = "mermaid";
+      div.textContent = code.textContent;
+      var pre = code.parentNode;
+      pre.parentNode.replaceChild(div, pre);
+      nodes.push(div);
+    });
+    try { mermaid.run({ nodes: nodes }).catch(function () {}); } catch (e) {}
+  }
+
+  // --- Rendering -----------------------------------------------------------
+  var main = document.getElementById("messages");
+  var idEl = document.getElementById("session-id");
+  var kindEl = document.getElementById("kind");
+
+  function renderSession(session) {
+    idEl.textContent = session.id ? "session " + session.id : "no session";
+    kindEl.textContent = session.kind || "";
+    main.innerHTML = "";
+    if (!session.messages || !session.messages.length) {
+      main.innerHTML = '<div class="empty">Session is empty so far&hellip;</div>';
+      return;
+    }
+    session.messages.forEach(function (msg) {
+      var div = document.createElement("div");
+      div.className = "msg " + (msg.role || "assistant");
+      var meta = msg.timestamp ? '<span class="meta">' + escapeHtml(msg.timestamp) + "</span>" : "";
+      var store = [];
+      var html = md.render(protectMath(msg.content || "", store));
+      div.innerHTML = meta + '<span class="role">' + escapeHtml(msg.role || "?") + "</span>" +
+        '<div class="body">' + html + "</div>";
+      restoreMath(div, store);
+      renderMermaid(div);
+      main.appendChild(div);
+    });
+    if (follow) window.scrollTo({ top: document.body.scrollHeight });
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // --- Auto-scroll ("follow") ----------------------------------------------
+  var follow = true;
+  window.addEventListener("scroll", function () {
+    var nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+    follow = nearBottom;
+  });
+
+  // --- SSE -----------------------------------------------------------------
+  var dot = document.getElementById("live-dot");
+  var label = document.getElementById("live-label");
+  function setLive(ok) {
+    dot.className = ok ? "dot live" : "dot";
+    label.textContent = ok ? "live" : "reconnecting";
+  }
+
+  function connect() {
+    var es = new EventSource("/events");
+    es.onopen = function () { setLive(true); };
+    es.onerror = function () { setLive(false); };
+    es.onmessage = function (ev) {
+      try { renderSession(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+    };
+  }
+
+  // Initial paint from the snapshot endpoint, then live updates.
+  // (?nosse in the URL disables the live stream — used by headless tests.)
+  fetch("/api/session").then(function (r) { return r.json(); })
+    .then(renderSession).catch(function () {});
+  if (!/[?&]nosse/.test(location.search)) connect();
+})();
+</script>
+</body>
+</html>

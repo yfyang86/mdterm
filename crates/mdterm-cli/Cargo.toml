@@ -1,0 +1,29 @@
+[package]
+name = "mdterm-cli"
+version = "0.1.0"
+edition = "2021"
+description = "mdterm binary: PTY-proxy wrapper + markdown render surfaces"
+
+[[bin]]
+name = "mdterm"
+path = "src/main.rs"
+
+[dependencies]
+mdterm-core = { path = "../mdterm-core" }
+mdterm-viewer = { path = "../mdterm-viewer" }
+# mdterm-pty is implemented on a parallel branch; the path dependency is
+# declared so the workspace merges cleanly. `wrap` code is written against
+# the spec'd public API (PtyProxy::spawn, HotkeyConfig, ProxyEvent) behind
+# a stub until the crate lands.
+mdterm-pty = { path = "../mdterm-pty" }
+mdterm-render = { path = "../mdterm-render" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["blocking"] }

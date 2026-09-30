@@ -1,0 +1,20 @@
+[package]
+name = "mdterm-viewer"
+version = "0.1.0"
+edition = "2021"
+description = "HTML viewer server (axum + SSE) for mdterm"
+
+[dependencies]
+mdterm-core = { path = "../mdterm-core" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+axum = "0.8"
+tracing = "0.1"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+tempfile = "3"
+futures = "0.3"

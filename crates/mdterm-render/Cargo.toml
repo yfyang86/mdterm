@@ -1,0 +1,15 @@
+[package]
+name = "mdterm-render"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal ANSI renderer (markdown + math + images) for mdterm"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+comrak = "0.31"
+syntect = "5"
+unicode-width = "0.2"
+once_cell = "1"
+tempfile = "3"
+tracing = "0.1"
