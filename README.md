@@ -1,7 +1,8 @@
 # mdterm
 
 A byte-transparent PTY proxy + markdown render surfaces for AI coding CLIs
-(Claude Code, Kimi CLI). The wrapped CLI behaves exactly as if run directly;
+(Claude Code, Kimi CLI, Codex, or any tool emitting mdterm's self-defined
+JSONL). The wrapped CLI behaves exactly as if run directly;
 its session transcript is rendered — live — onto surfaces mdterm owns
 (browser pane, terminal pager, tmux popup), never injected into the CLI's
 own screen.
@@ -55,10 +56,61 @@ dump, see "Terminal render surface" below).
 mdterm wrap -- kimi
 ```
 
-`mdterm wrap` with no command auto-detects `claude` first, then `kimi`.
-Transcripts are discovered automatically (`~/.claude/projects/**/*.jsonl`,
-newest first; best-effort probes under `~/.kimi` / `~/.config/kimi`), or
-point at one explicitly with `--transcript`.
+### Codex
+
+```bash
+mdterm wrap -- codex
+```
+
+`mdterm wrap` with no command auto-detects `claude`, then `kimi`, then
+`codex` on PATH.
+
+### Providers and transcripts
+
+All transcript-reading commands accept `--provider <claude|codex|kimi|
+selfdefined>` and `--transcript <path>`:
+
+- With neither, the **newest transcript across all providers** is used
+  (by mtime; see roots below) and parsed with that provider's parser.
+- With `--transcript` alone, the format is **sniffed from the file's
+  contents** — provider flags are optional for explicit files.
+- With `--provider` alone, discovery is restricted to that provider's
+  roots. `--provider selfdefined` has no roots and requires
+  `--transcript`.
+
+Discovery roots (newest `*.jsonl` wins):
+
+| Provider | Roots |
+|----------|-------|
+| claude | `~/.claude/projects/**/` |
+| kimi | `~/.kimi-code/sessions/**/`, `~/.kimi/sessions/**/` (legacy probes: `~/.kimi/projects/**/`, `~/.config/kimi/**/sessions`) |
+| codex | `~/.codex/sessions/**/` |
+
+Parsed formats: Claude Code session JSONL; kimi-code wire
+(`agent.message.appended`, protocol ≥ 1.5), legacy kimi wire
+(`TurnBegin`/`ContentPart`) and kimi `context.jsonl`; Codex rollouts
+(`response_item` messages + tool calls, `event_msg` fallback);
+selfdefined (below). Kimi `think` blocks are skipped; tool calls are
+summarized as fenced JSON; tool outputs render as fenced `Tool` messages.
+
+### Self-defined transcript format
+
+Any tool (or script) can feed mdterm by writing the canonical JSONL —
+one JSON object per line:
+
+```json
+{"type":"metadata","sessionId":"my-session","title":"optional"}
+{"type":"message","role":"user","content":"markdown text","timestamp":"2026-09-30T13:00:00Z"}
+{"type":"message","role":"assistant","content":[{"type":"text","text":"..."}],"model":"..."}
+```
+
+- `type`: `metadata` (optional, sets the session id via `sessionId` /
+  `session_id` / `id`) or `message`.
+- `role`: `user` | `assistant` | `system` | `tool` (others are skipped).
+- `content`: a markdown string, or an array of `{"type":"text","text":…}`
+  blocks (concatenated with blank lines).
+- `timestamp`, `model`: optional strings, passed through to the UI.
+- Unknown or malformed lines are skipped, never fatal.
 
 ### Standalone viewer
 
@@ -189,8 +241,13 @@ time; no CDN is contacted at runtime):
 ## Troubleshooting
 
 - **`no transcript found ... pass --transcript <path>`** — mdterm looks for
-  the newest `*.jsonl` under `~/.claude/projects/`. If the CLI has not
-  written a session yet (or `$HOME` differs), pass the file explicitly.
+  the newest `*.jsonl` under the provider roots (see "Providers and
+  transcripts"). If no CLI has written a session yet (or `$HOME` differs),
+  pass the file explicitly; the format is sniffed automatically.
+- **Wrong provider picked up** — pass `--provider <claude|codex|kimi|
+  selfdefined>` to pin the parser. Sniffing keys on distinctive line
+  shapes, so a file whose first 200 lines contain no recognizable line
+  falls back to the Claude parser (which tolerantly skips unknown lines).
 - **Browser does not open** — `wrap`/`render` use `open` on macOS and
   `xdg-open` on Linux. If neither works (headless/SSH), copy the printed
   `http://127.0.0.1:<port>/` URL into any browser; for remote sessions use
