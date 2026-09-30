@@ -1,0 +1,12 @@
+# Rust build artifacts
+/target
+
+# Cargo.lock is tracked on purpose: this is a binary workspace
+# (reproducible installs of the `mdterm` CLI).
+
+# macOS
+.DS_Store
+
+# Editor cruft
+*.swp
+*~
