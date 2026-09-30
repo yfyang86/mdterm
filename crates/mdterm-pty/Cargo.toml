@@ -1,7 +1,9 @@
 [package]
 name = "mdterm-pty"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Byte-transparent PTY proxy with hotkey interception for mdterm"
 
 # Toolchain: rustc 1.98.1 (see ~/.cargo/bin/rustc). Semver-compatible ranges;

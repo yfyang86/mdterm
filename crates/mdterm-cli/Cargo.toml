@@ -1,7 +1,9 @@
 [package]
 name = "mdterm-cli"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "mdterm binary: PTY-proxy wrapper + markdown render surfaces"
 
 [[bin]]

@@ -1072,7 +1072,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mdterm-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1090,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "mdterm-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "filetime",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "mdterm-pty"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -1116,7 +1116,7 @@ dependencies = [
 
 [[package]]
 name = "mdterm-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "mdterm-viewer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
