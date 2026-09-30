@@ -268,4 +268,18 @@ cargo test --workspace
 Sprint status: **Sprint 1** (core/pty/viewer/cli + browser surface) and
 **Sprint 2** (`mdterm-render` terminal ANSI renderer with math/images,
 capability detection, tmux/pager terminal surface, `render --file/--math/
---width`, `caps`) complete.
+--width`, `caps`) complete. Post-Sprint: multi-provider transcript support
+(kimi/codex/selfdefined parsers, format sniffing, cross-provider discovery)
+and the F7 dead-keyboard fix.
+
+## Author
+
+Yifan Yang <yfyang.86@hotmail.com>
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Vendored frontend assets (see "The browser viewer") retain their own
+licenses, all permissive and MIT-compatible: markdown-it (MIT),
+highlight.js (BSD-3-Clause), KaTeX (MIT), mermaid (MIT).
